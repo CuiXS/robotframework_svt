@@ -16,10 +16,23 @@ Methods under tests can log normal messages
 Methods outside tests can log messages to syslog
     Correct messages should be logged to syslog
 
+Logging from listener when using JSON output
+    [Setup]    Run Tests With Logging Listener    format=json
+    Test statuses should be correct
+    Log and report should be created
+    Correct messages should be logged to normal log
+    Correct warnings should be shown in execution errors
+    Correct messages should be logged to syslog
+
 *** Keywords ***
 Run Tests With Logging Listener
-    ${path} =    Normalize Path    ${LISTENER DIR}/logging_listener.py
-    Run Tests    --listener ${path} -l l.html -r r.html    misc/pass_and_fail.robot
+    [Arguments]    ${format}=xml
+    Should Be True    $format in ('xml', 'json')
+    VAR    ${output}      ${OUTDIR}/output.${format}
+    VAR    ${options}
+    ...    --listener ${LISTENER DIR}/logging_listener.py
+    ...    -o ${output} -l l.html -r r.html
+    Run Tests    ${options}    misc/pass_and_fail.robot    output=${output}
 
 Test statuses should be correct
     Check Test Case    Pass
@@ -89,9 +102,9 @@ Correct messages should be logged to normal log
 'My Keyword' has correct messages
     [Arguments]    ${kw}    ${name}
     IF    '${name}' == 'Suite Setup'
-        ${type} =    Set Variable    setup
+        VAR    ${type}     setup
     ELSE
-        ${type} =    Set Variable    keyword
+        VAR    ${type}     keyword
     END
     Check Log Message    ${kw[0]}       start ${type}    INFO
     Check Log Message    ${kw[1]}       start ${type}    WARN

@@ -1,18 +1,24 @@
+import json
 import os
 import re
+from datetime import datetime
+from pathlib import Path
 
+from jsonschema import Draft202012Validator
 from xmlschema import XMLSchema
 
-from robot import utils
 from robot.api import logger
 from robot.libraries.BuiltIn import BuiltIn
+from robot.libraries.Collections import Collections
 from robot.result import (
     Break, Continue, Error, ExecutionResult, ExecutionResultBuilder, For,
-    ForIteration, If, IfBranch, Keyword, Result, ResultVisitor, Return,
+    ForIteration, Group, If, IfBranch, Keyword, Result, ResultVisitor, Return,
     TestCase, TestSuite, Try, TryBranch, Var, While, WhileIteration
 )
+from robot.result.executionerrors import ExecutionErrors
 from robot.result.model import Body, Iterations
 from robot.utils.asserts import assert_equal
+from robot.utils import eq, get_error_details, is_truthy, Matcher
 
 
 class WithBodyTraversing:
@@ -55,6 +61,10 @@ class ATestWhile(While, WithBodyTraversing):
     pass
 
 
+class ATestGroup(Group, WithBodyTraversing):
+    pass
+
+
 class ATestIf(If, WithBodyTraversing):
     pass
 
@@ -89,6 +99,7 @@ class ATestBody(Body):
     if_class = ATestIf
     try_class = ATestTry
     while_class = ATestWhile
+    group_class = ATestGroup
     var_class = ATestVar
     return_class = ATestReturn
     break_class = ATestBreak
@@ -118,7 +129,8 @@ class ATestIterations(Iterations, WithBodyTraversing):
 
 ATestKeyword.body_class = ATestVar.body_class = ATestReturn.body_class \
     = ATestBreak.body_class = ATestContinue.body_class \
-    = ATestError.body_class = ATestBody
+    = ATestError.body_class = ATestGroup.body_class \
+    = ATestBody
 ATestFor.iterations_class = ATestWhile.iterations_class = ATestIterations
 ATestFor.iteration_class = ATestForIteration
 ATestWhile.iteration_class = ATestWhileIteration
@@ -140,48 +152,73 @@ class TestCheckerLibrary:
     ROBOT_LIBRARY_SCOPE = 'GLOBAL'
 
     def __init__(self):
-        self.schema = XMLSchema('doc/schema/result.xsd')
+        self.xml_schema = XMLSchema('doc/schema/result.xsd')
+        with open('doc/schema/result.json', encoding='UTF-8') as f:
+            self.json_schema = Draft202012Validator(json.load(f))
 
-    def process_output(self, path, validate=None):
+    def process_output(self, path: 'None|Path', validate: 'bool|None' = None):
         set_suite_variable = BuiltIn().set_suite_variable
-        if not path or path.upper() == 'NONE':
+        if path is None:
             set_suite_variable('$SUITE', None)
             logger.info("Not processing output.")
             return
-        path = path.replace('/', os.sep)
         if validate is None:
-            validate = os.getenv('ATEST_VALIDATE_OUTPUT', False)
-        if utils.is_truthy(validate):
-            self._validate_output(path)
+            validate = is_truthy(os.getenv('ATEST_VALIDATE_OUTPUT', False))
+        if validate:
+            if path.suffix.lower() == '.json':
+                self.validate_json_output(path)
+            else:
+                self._validate_output(path)
         try:
-            logger.info("Processing output '%s'." % path)
-            result = Result(suite=ATestTestSuite())
-            ExecutionResultBuilder(path).build(result)
+            logger.info(f"Processing output '{path}'.")
+            if path.suffix.lower() == '.json':
+                result = self._build_result_from_json(path)
+            else:
+                result = self._build_result_from_xml(path)
         except:
             set_suite_variable('$SUITE', None)
-            msg, details = utils.get_error_details()
+            msg, details = get_error_details()
             logger.info(details)
-            raise RuntimeError('Processing output failed: %s' % msg)
+            raise RuntimeError(f'Processing output failed: {msg}')
         result.visit(ProcessResults())
         set_suite_variable('$SUITE', result.suite)
         set_suite_variable('$STATISTICS', result.statistics)
         set_suite_variable('$ERRORS', result.errors)
 
+    def _build_result_from_xml(self, path):
+        result = Result(source=path, suite=ATestTestSuite())
+        ExecutionResultBuilder(path).build(result)
+        return result
+
+    def _build_result_from_json(self, path):
+        with open(path, encoding='UTF-8') as file:
+            data = json.load(file)
+        return Result(source=path,
+                      suite=ATestTestSuite.from_dict(data['suite']),
+                      errors=ExecutionErrors(data.get('errors')),
+                      rpa=data.get('rpa'),
+                      generator=data.get('generator'),
+                      generation_time=datetime.fromisoformat(data['generated']))
+
     def _validate_output(self, path):
         version = self._get_schema_version(path)
         if not version:
             raise ValueError('Schema version not found from XML output.')
-        if version != self.schema.version:
+        if version != self.xml_schema.version:
             raise ValueError(f'Incompatible schema versions. '
-                             f'Schema has `version="{self.schema.version}"` but '
+                             f'Schema has `version="{self.xml_schema.version}"` but '
                              f'output file has `schemaversion="{version}"`.')
-        self.schema.validate(path)
+        self.xml_schema.validate(path)
 
     def _get_schema_version(self, path):
         with open(path, encoding='UTF-8') as file:
             for line in file:
                 if line.startswith('<robot'):
                     return re.search(r'schemaversion="(\d+)"', line).group(1)
+
+    def validate_json_output(self, path: Path):
+        with path.open(encoding='UTF') as file:
+            self.json_schema.validate(json.load(file))
 
     def get_test_case(self, name):
         suite = BuiltIn().get_variable_value('${SUITE}')
@@ -197,7 +234,7 @@ class TestCheckerLibrary:
 
     def get_tests_from_suite(self, suite, name=None):
         tests = [test for test in suite.tests
-                 if name is None or utils.eq(test.name, name)]
+                 if name is None or eq(test.name, name)]
         for subsuite in suite.suites:
             tests.extend(self.get_tests_from_suite(subsuite, name))
         return tests
@@ -212,7 +249,7 @@ class TestCheckerLibrary:
         raise RuntimeError(err % (name, suite.name))
 
     def _get_suites_from_suite(self, suite, name):
-        suites = [suite] if utils.eq(suite.name, name) else []
+        suites = [suite] if eq(suite.name, name) else []
         for subsuite in suite.suites:
             suites.extend(self._get_suites_from_suite(subsuite, name))
         return suites
@@ -257,7 +294,7 @@ class TestCheckerLibrary:
                 return
         if test.exp_message.startswith('GLOB:'):
             pattern = self._get_pattern(test, 'GLOB:')
-            matcher = utils.Matcher(pattern, caseless=False, spaceless=False)
+            matcher = Matcher(pattern, caseless=False, spaceless=False)
             if matcher.match(test.message):
                 return
         if test.exp_message.startswith('STARTS:'):
@@ -331,7 +368,7 @@ class TestCheckerLibrary:
                                  f"Expected ({len(expected)}): {', '.join(expected)}\n"
                                  f"Actual   ({len(actual)}): {', '.join(actual)}")
         for name in expected:
-            if not utils.Matcher(name).match_any(actual):
+            if not Matcher(name).match_any(actual):
                 raise AssertionError(f'Suite {name} not found.')
 
     def should_contain_tags(self, test, *tags):
@@ -370,16 +407,26 @@ class TestCheckerLibrary:
             b.should_be_equal(item.level, 'INFO' if level == 'HTML' else level, 'Wrong log level')
         b.should_be_equal(str(item.html), str(html or level == 'HTML'), 'Wrong HTML status')
 
-    def outputs_should_be_equal(self, output1, output2):
+    def outputs_should_contain_same_data(self, output1, output2, ignore_timestamps=False):
+        dictionaries_should_be_equal = Collections().dictionaries_should_be_equal
+        if ignore_timestamps:
+            ignore_keys = ['start_time', 'end_time', 'elapsed_time', 'timestamp']
+        else:
+            ignore_keys = None
         result1 = ExecutionResult(output1)
         result2 = ExecutionResult(output2)
-        should_be_equal = BuiltIn().should_be_equal
-        should_be_equal(result1.suite.to_dict(),
-                        result2.suite.to_dict())
-        should_be_equal(result1.statistics.to_dict(),
-                        result2.statistics.to_dict())
-        should_be_equal(result1.errors.messages.to_dicts(),
-                        result2.errors.messages.to_dicts())
+        dictionaries_should_be_equal(result1.suite.to_dict(),
+                                     result2.suite.to_dict(),
+                                     ignore_keys=ignore_keys)
+        dictionaries_should_be_equal(result1.statistics.to_dict(),
+                                     result2.statistics.to_dict(),
+                                     ignore_keys=ignore_keys)
+        # Use `zip(..., strict=True)` when Python 3.10 is minimum version.
+        assert len(result1.errors) == len(result2.errors)
+        for msg1, msg2 in zip(result1.errors, result2.errors):
+            dictionaries_should_be_equal(msg1.to_dict(),
+                                         msg2.to_dict(),
+                                         ignore_keys=ignore_keys)
 
 
 class ProcessResults(ResultVisitor):
