@@ -130,6 +130,8 @@ class _ExportVisitor(ResultVisitor):
 
     def start_result(self, result):
         source = str(result.source) if result.source else None
+        # isoformat() omits microseconds when they are exactly zero, which is
+        # standard Python behaviour and acceptable for storage purposes.
         generated = (result.generation_time.isoformat()
                      if result.generation_time else None)
         cur = self._conn.execute(
