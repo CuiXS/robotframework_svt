@@ -67,7 +67,8 @@ NESTED_XML = """<?xml version="1.0" encoding="UTF-8"?>
 class TestResultToDbExporterBasic(unittest.TestCase):
 
     def setUp(self):
-        self._tmp = tempfile.mktemp(suffix='.db')
+        fd, self._tmp = tempfile.mkstemp(suffix='.db')
+        os.close(fd)
         self.result = ExecutionResult(StringIO(SIMPLE_XML))
         self.exporter = ResultToDbExporter(self._tmp)
 
@@ -188,7 +189,8 @@ class TestResultToDbExporterBasic(unittest.TestCase):
 class TestResultToDbExporterNested(unittest.TestCase):
 
     def setUp(self):
-        self._tmp = tempfile.mktemp(suffix='.db')
+        fd, self._tmp = tempfile.mkstemp(suffix='.db')
+        os.close(fd)
         self.result = ExecutionResult(StringIO(NESTED_XML))
         self.exporter = ResultToDbExporter(self._tmp)
 
@@ -229,7 +231,8 @@ class TestResultToDbExporterNested(unittest.TestCase):
 class TestResultToDbExporterContextManager(unittest.TestCase):
 
     def test_context_manager_closes_connection(self):
-        tmp = tempfile.mktemp(suffix='.db')
+        fd, tmp = tempfile.mkstemp(suffix='.db')
+        os.close(fd)
         try:
             result = ExecutionResult(StringIO(SIMPLE_XML))
             with ResultToDbExporter(tmp) as exporter:
@@ -246,7 +249,8 @@ class TestResultToDbExporterFromFile(unittest.TestCase):
     """Integration test using the golden.xml fixture."""
 
     def setUp(self):
-        self._tmp = tempfile.mktemp(suffix='.db')
+        fd, self._tmp = tempfile.mkstemp(suffix='.db')
+        os.close(fd)
         golden = CURDIR / 'golden.xml'
         self.result = ExecutionResult(golden)
         self.exporter = ResultToDbExporter(self._tmp)

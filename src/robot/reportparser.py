@@ -81,12 +81,12 @@ def main(args=None):
                 _error(f"File not found: {output}")
             result = ExecutionResult(path)
             run_id = exporter.export(result)
-            total = result.suite.statistics
+            stats = result.suite.statistics
             print(
                 f"[run {run_id}] {output}: "
-                f"{total.passed} passed, "
-                f"{total.failed} failed, "
-                f"{total.skipped} skipped  →  {db_path}"
+                f"{stats.passed} passed, "
+                f"{stats.failed} failed, "
+                f"{stats.skipped} skipped  →  {db_path}"
             )
 
 
