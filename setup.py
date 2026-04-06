@@ -71,5 +71,6 @@ setup(
     packages     = find_packages('src'),
     entry_points = {'console_scripts': ['robot = robot.run:run_cli',
                                         'rebot = robot.rebot:rebot_cli',
-                                        'libdoc = robot.libdoc:libdoc_cli']}
+                                        'libdoc = robot.libdoc:libdoc_cli',
+                                        'reportparser = robot.reportparser:reportparser_cli']}
 )
